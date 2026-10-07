@@ -1,0 +1,16 @@
+{
+  "name": "session-doctor",
+  "owner": {
+    "name": "cagatayuncu"
+  },
+  "metadata": {
+    "description": "Diagnose and clean up leaked AI-agent processes"
+  },
+  "plugins": [
+    {
+      "name": "session-doctor",
+      "source": "plugins/session-doctor",
+      "description": "Find and safely stop leaked or stuck agent sessions, orphaned hooks, MCP servers and background jobs; measure hook overhead. Windows, macOS, Linux."
+    }
+  ]
+}
