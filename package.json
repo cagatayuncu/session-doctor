@@ -1,6 +1,6 @@
 {
   "name": "session-doctor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Agent skill that finds and safely stops leaked AI-agent processes (Claude Code, Cursor, other agent CLIs)",
   "license": "MIT",
@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "diagnose": "node plugins/session-doctor/skills/session-doctor/scripts/session-doctor.js diagnose"
+    "diagnose": "node plugins/session-doctor/skills/session-doctor/scripts/session-doctor.js diagnose",
+    "demo": "node tools/demo.js"
   }
 }

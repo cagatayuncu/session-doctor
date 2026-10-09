@@ -1,10 +1,13 @@
 'use strict';
-// Plain-text rendering of a diagnosis. Kept separate so the JSON stays the source of truth.
+// Plain-language text report. The JSON (diagnosis.json / --json) stays the full detail;
+// this view leads with a summary, lists sessions by project and says what can be freed.
 
-const path = require('path');
-const { formatSpan, truncate, sum } = require('./util');
+const { truncate, sum } = require('./util');
+const { summarize } = require('./summary');
 
-const STATE_ORDER = { hung: 0, 'orphan-cli': 1, stale: 2, unknown: 3, active: 4, self: 5 };
+const MB_PER_GB = 1024;
+const TITLE_WIDTH = 46;
+const LABEL_WIDTH = 16;
 
 // Command lines, titles and paths come from the machine: never let them carry control characters.
 function cellText(value) {
@@ -27,48 +30,98 @@ function localTime(ms) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function section(title) {
-  return `\n== ${title} ==`;
+function size(mb) {
+  return mb >= MB_PER_GB ? `${(mb / MB_PER_GB).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 }
 
-function childSummary(children) {
-  return Object.keys(children).sort().map((k) => `${k}:${children[k]}`).join(' ');
+// "20m", "3h 10m", "9h", "2d 4h"
+function span(minutes) {
+  if (minutes == null) return '?';
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 3) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
-function sessionRows(sessions) {
-  return [...sessions]
-    .sort((a, b) => (STATE_ORDER[a.state] - STATE_ORDER[b.state]) || ((b.idleMinutes || 0) - (a.idleMinutes || 0)))
-    .map((s) => ({
-      State: s.state,
-      Agent: s.agent,
-      Pid: s.pid,
-      Idle: formatSpan(s.idleMinutes),
-      Age: formatSpan(s.ageHours * 60),
-      Procs: s.procs,
-      MB: s.mb,
-      Children: truncate(childSummary(s.children), 34),
-      Ports: s.ports.join(','),
-      LastTool: truncate(s.subagent ? `${s.subagent}>${s.lastTool}` : s.lastTool, 28),
-      Worktree: s.uncommitted ? `${s.uncommitted} uncommitted` : '',
-      Session: truncate(s.title || (s.cwd && path.basename(s.cwd)) || s.command, 42),
-    }));
+function plural(n, one, many = `${one}s`) {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
-function groupRows(groups) {
-  return groups.map((g) => ({
-    Category: g.category,
-    Pid: g.pid,
-    Role: g.role,
-    Age: formatSpan(g.ageHours * 60),
-    Procs: g.procs,
-    MB: g.mb,
-    Ports: g.ports.join(','),
-    What: truncate(g.workload || g.command, 100),
-  }));
+function sessionLabel(s) {
+  switch (s.tier) {
+    case 'this': return '● this session';
+    case 'working': return '● working';
+    case 'recent': return `◐ idle ${span(s.idleMinutes)}`;
+    case 'idle': return `○ idle ${span(s.idleMinutes)}`;
+    case 'stale': return `○ idle ${span(s.idleMinutes ?? s.ageHours * 60)}`;
+    case 'hung': return `⚠ hung ${span(s.idleMinutes)}`;
+    case 'orphan-cli': return '✕ orphaned';
+    default: return '? no activity info';
+  }
 }
 
-function totals(groups) {
-  return { groups: groups.length, procs: sum(groups, 'procs'), mb: sum(groups, 'mb'), pids: groups.map((g) => g.pid).join(',') };
+function sessionNotes(s) {
+  const notes = [];
+  if (s.tier === 'stale') notes.push('stale');
+  if (s.tier === 'hung' && s.lastTool) notes.push(`stuck in ${s.subagent ? `${s.subagent} > ` : ''}${s.lastTool}`);
+  if (s.tier === 'orphan-cli') notes.push('its launcher is gone');
+  if (s.where) notes.push(s.where);
+  if (s.uncommitted) notes.push(`${s.uncommitted} uncommitted files`);
+  if (s.ports && s.ports.length) notes.push(`port ${s.ports.join(',')}`);
+  if (s.agent !== 'claude') notes.push(s.agent);
+  return notes;
+}
+
+function sessionLine(s) {
+  const title = truncate(s.title || s.command || '(untitled)', TITLE_WIDTH).padEnd(TITLE_WIDTH);
+  const mcp = s.children && s.children.mcp ? `${s.children.mcp} MCP` : '';
+  const notes = sessionNotes(s);
+  const parts = [sessionLabel(s).padEnd(LABEL_WIDTH), title, size(s.mb).padStart(7), mcp.padEnd(6), `pid ${s.pid}`];
+  return `    ${parts.join('  ')}${notes.length ? `  · ${notes.join(' · ')}` : ''}`.trimEnd();
+}
+
+function tierSentence(tiers, staleHours) {
+  const parts = [];
+  if (tiers.working) parts.push(`${tiers.working} working`);
+  if (tiers.recent) parts.push(`${tiers.recent} active in the last hour`);
+  if (tiers.idle) parts.push(`${tiers.idle} idle for hours`);
+  if (tiers.stale) parts.push(`${tiers.stale} stale (idle ${staleHours}h+)`);
+  if (tiers.hung) parts.push(`${tiers.hung} hung`);
+  if (tiers['orphan-cli']) parts.push(`${tiers['orphan-cli']} orphaned`);
+  if (tiers.unknown) parts.push(`${tiers.unknown} without activity info`);
+  return parts.length ? `${parts.join(', ')}.` : '';
+}
+
+function worstHook(d) {
+  const claude = d.hotPath.filter((r) => r.agent === 'claude').sort((a, b) => b.total - a.total)[0];
+  return claude && claude.total > 0 ? claude : null;
+}
+
+function overview(d, s, probes, opts) {
+  const lines = [];
+  const others = s.sessions.count - (s.tiers.this || 0);
+  lines.push(`${plural(s.sessions.count, 'agent session')} open${s.tiers.this ? ` (this one included)` : ''}, using ${size(s.sessions.mb)} with ${plural(s.sessions.mcp, 'MCP server process', 'MCP server processes')}.`);
+  if (others > 0) lines.push(tierSentence(s.tiers, opts.staleHours));
+  lines.push(d.orphans.length || d.stuckHooks.length
+    ? `${plural(d.orphans.length + d.stuckHooks.length, 'leaked process group')} (${size(sum(d.orphans, 'mb') + sum(d.stuckHooks, 'mb'))}) left behind by agents.`
+    : 'No leaked agent processes.');
+  lines.push(`Machine: CPU ${d.load.cpuPercent}% of ${d.load.cores} cores, RAM ${d.load.memUsedPercent}% used (${d.load.memFreeGb} GB free).`);
+  const hook = worstHook(d);
+  const today = probes.hookStats && probes.hookStats.daily.length ? probes.hookStats.daily[probes.hookStats.daily.length - 1] : null;
+  if (hook) lines.push(`Hooks: every ${hook.tool} starts ${plural(hook.total, 'hook process', 'hook processes')}${today ? `; a hook takes ${(today.p50Ms / 1000).toFixed(1)} s (median, ${today.day})` : ''}.`);
+  return lines.filter(Boolean).map((l) => `  ${l}`).join('\n');
+}
+
+function sessionsSection(s) {
+  if (s.groups.length === 0) return null;
+  const lines = ['Open sessions by project'];
+  for (const group of s.groups) {
+    lines.push(`  ${cellText(group.name)}  (${plural(group.sessions.length, 'session')}, ${size(group.mb)})`);
+    for (const session of group.sessions) lines.push(cellText(sessionLine(session)));
+  }
+  return lines.join('\n');
 }
 
 // The thresholds and project of this report, so a pasted cleanup selects the same items.
@@ -78,78 +131,107 @@ function sameSettingsFlags(opts) {
   return flags.join(' ');
 }
 
-function suggestions(d, opts) {
+function cleanupSection(d, s, opts) {
   const base = `node "${opts.script}" cleanup`;
   const flags = sameSettingsFlags(opts);
-  const safe = totals([...d.orphans.filter((g) => g.category === 'orphan-agent'), ...d.stuckHooks]);
-  const tasks = totals(d.orphans.filter((g) => g.category === 'orphan-task'));
-  const byState = (state) => totals(d.sessions.filter((s) => s.state === state));
-  const confirm = [
-    ['orphan-task', tasks, 'background jobs or servers whose launcher is gone'],
-    ['orphan-cli', byState('orphan-cli'), 'agent CLIs whose launcher died'],
-    ['hung', byState('hung'), 'interrupt the turn first if the app offers it; stop only if still hung'],
-    ['stale', byState('stale'), 'idle sessions; ask which ones'],
-  ];
-  const lines = [];
-  if (safe.groups) lines.push(`  SAFE    orphan-agent + stuck-hook: ${safe.groups} groups, ${safe.procs} procs, ${safe.mb} MB\n          ${base} --category orphan-agent,stuck-hook ${flags} --apply`);
-  for (const [category, t, note] of confirm) {
-    if (t.groups) lines.push(`  CONFIRM ${category} (${note}): ${t.groups} groups, ${t.procs} procs, ${t.mb} MB, PIDs ${t.pids}\n          ${base} --category ${category} --only <chosen pids> ${flags} --apply`);
+  const lines = ['What can be cleaned up'];
+  if (s.safe.count) {
+    lines.push(`  Safe now: ${plural(s.safe.count, 'leaked agent process group')} (${size(s.safe.mb)}, ${plural(s.safe.procs, 'process', 'processes')}).`);
+    lines.push(`    ${base} --category orphan-agent,stuck-hook ${flags} --apply`);
   }
-  return lines.length ? lines.join('\n') : '  Nothing to clean up.';
+  const choices = [
+    ['orphan-task', s.orphanTasks, 'background job or server', 'background jobs or servers', 'its launcher is gone; it may still be in use'],
+    ['hung', s.candidates.hung, 'hung session', 'hung sessions', 'interrupt the turn first if the app can'],
+    ['orphan-cli', s.candidates['orphan-cli'], 'orphaned agent CLI', 'orphaned agent CLIs', 'its launcher is gone'],
+    ['stale', s.candidates.stale, 'stale session', 'stale sessions', `idle ${opts.staleHours}h+`],
+  ];
+  for (const [category, t, one, many, note] of choices) {
+    if (!t.count) continue;
+    lines.push(`  Your choice: ${plural(t.count, one, many)} (${note}): ${size(t.mb)}, ${plural(t.procs, 'process', 'processes')}, pids ${t.pids.join(',')}.`);
+    lines.push(`    ${base} --category ${category} --only <chosen pids> ${flags} --apply`);
+  }
+  if (s.reclaim.count) {
+    lines.push(`  Closing all of the above frees about ${size(s.reclaim.mb)} and ${plural(s.reclaim.procs, 'process', 'processes')}. Conversations stay on disk and can be resumed.`);
+  } else {
+    lines.push('  Nothing needs cleaning up right now.');
+    if (s.tiers.idle) lines.push(`  ${plural(s.tiers.idle, 'session')} idle for hours, under the ${opts.staleHours}h stale mark; diagnose --stale-hours <n> lists them as stale.`);
+  }
+  return lines.join('\n');
 }
 
-function hookLines(d, probes) {
-  const out = ['  Hook processes started per tool call:', table(d.hotPath.map((r) => ({ Agent: r.agent, Tool: r.tool, Pre: r.pre, Post: r.post, Total: r.total })), ['Agent', 'Tool', 'Pre', 'Post', 'Total'])];
+function groupLine(g) {
+  const what = cellText(truncate(g.workload || g.command, 80));
+  const tier = g.category === 'orphan-task' ? 'your choice' : 'safe';
+  const ports = g.ports.length ? ` · port ${g.ports.join(',')}` : '';
+  return `  ✕ ${g.role.padEnd(12)} ${what}\n      ${tier} · ${span(g.ageHours * 60)} old · ${size(g.mb)} · ${plural(g.procs, 'process', 'processes')}${ports} · pid ${g.pid}`;
+}
+
+function leakSection(d) {
+  const groups = [...d.orphans, ...d.stuckHooks];
+  if (groups.length === 0) return null;
+  const lines = ['Leaked processes (their launcher is gone, or a hook outlived its timeout)'];
+  if (d.portsKnown === false) lines.push('  Note: listening ports could not be read (no lsof/ss or no permission), so orphaned MCP/plugin servers need your choice.');
+  return [...lines, ...groups.map(groupLine)].join('\n');
+}
+
+function ideSection(d) {
+  if (d.ideHosts.length === 0) return null;
+  return ['Inside editors', ...d.ideHosts.map((h) => `  ${h.label}: ${plural(h.roots, 'window process', 'window processes')}, ${plural(h.mcp, 'MCP server')} (${size(h.mcpMb)}), ${plural(h.clis, 'agent CLI')}, ${plural(h.hooks, 'hook process', 'hook processes')}`)].join('\n');
+}
+
+function desktopSection(d, probes, opts) {
+  const lines = [];
+  if (d.terminals.length) {
+    lines.push(`  ${plural(d.terminals.length, 'Terminal-panel shell')} (${size(sum(d.terminals, 'mb'))}, oldest ${span(Math.max(...d.terminals.map((t) => t.ageHours)) * 60)}); closing their tabs or restarting the app frees them.`);
+  }
+  if (probes.timeouts.length) {
+    const last = [...probes.timeouts].sort((a, b) => b.at - a.at)[0];
+    lines.push(`  ${plural(probes.timeouts.length, 'session')} timed out for inactivity in the last ${opts.timeoutHours}h (latest ${localTime(last.at)}, last tool ${last.lastTool}).`);
+  }
+  return lines.length ? ['Claude desktop app', ...lines].join('\n') : null;
+}
+
+function hooksSection(d, probes) {
+  const lines = ['Hook overhead'];
+  for (const agent of ['claude', 'cursor']) {
+    const rows = d.hotPath.filter((r) => r.agent === agent);
+    if (rows.length) lines.push(`  ${agent === 'claude' ? 'Claude Code' : 'Cursor'}: ${rows.map((r) => `${r.tool} ${r.total}`).join(' · ')} hook processes per call`);
+  }
   const bySource = {};
-  for (const h of d.hookConfig) if (/^(PreToolUse|PostToolUse|preToolUse|postToolUse)$/.test(h.event)) bySource[h.source] = (bySource[h.source] || 0) + 1;
-  const sources = Object.entries(bySource).sort((a, b) => b[1] - a[1]).map(([s, n]) => `${s}=${n}`);
-  if (sources.length) out.push(`  Registered tool hooks by source: ${sources.join(', ')}`);
-  for (const v of probes.disableVars || []) out.push(`  Note: ${v.name} lists ${v.count} hooks. Hooks disabled this way are still spawned; they just exit early.`);
-  if (probes.spawn) out.push(`  Spawn cost now: node ${probes.spawn.nodeMs} ms, ${probes.spawn.shell || 'shell'} ${probes.spawn.shellMs} ms (each hook pays roughly shell + its interpreter).`);
-  return out.join('\n');
+  for (const h of d.hookConfig) if (/^(pre|post)ToolUse$/i.test(h.event)) bySource[h.source] = (bySource[h.source] || 0) + 1;
+  const sources = Object.entries(bySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => `${src} ${n}`);
+  if (sources.length) lines.push(`  Registered by: ${sources.join(', ')}`);
+  for (const v of probes.disableVars || []) lines.push(`  ${v.name} lists ${v.count} hooks; hooks disabled that way are still started, they only exit early.`);
+  if (probes.spawn) lines.push(`  Starting a process costs ${probes.spawn.nodeMs} ms (node) and ${probes.spawn.shellMs} ms (${probes.spawn.shell || 'shell'}) right now.`);
+  const stats = probes.hookStats;
+  if (stats && stats.daily.length) lines.push(`  Median hook time per day: ${stats.daily.slice(-6).map((r) => `${r.day.slice(5)} ${(r.p50Ms / 1000).toFixed(1)} s`).join(' · ')}`);
+  if (stats && stats.hooks.length) lines.push(`  Slowest: ${stats.hooks.slice(0, 4).map((h) => `${cellText(h.key.split(' ').pop())} ${(h.p50Ms / 1000).toFixed(1)} s × ${h.n}`).join(', ')}`);
+  return lines.length > 1 ? lines.join('\n') : null;
 }
 
-function transcriptLines(summary, stats) {
-  const out = [`  ${summary.totalGb} GB in ${summary.files} files. Largest:`,
-    table(summary.largest.map((f) => ({ MB: f.mb, LastWrite: localTime(f.lastWrite), Project: truncate(f.project, 44), Id: f.id })), ['MB', 'LastWrite', 'Project', 'Id'])];
-  if (!stats) return out.join('\n');
-  out.push('  Hook output share in the most recently written transcripts:');
-  out.push(table(stats.files.map((f) => ({ MB: f.mb, HookPercent: f.hookPercent, File: path.basename(f.file) })), ['MB', 'HookPercent', 'File']));
-  out.push('  Slowest hooks in those transcripts (by total time):');
-  out.push(table(stats.hooks.slice(0, 8).map((h) => ({ Hook: truncate(h.key, 60), n: h.n, p50Ms: h.p50Ms, p90Ms: h.p90Ms, totalSec: h.totalSec, errors: h.errors, cancelled: h.cancelled, timeouts: h.timeouts })), ['Hook', 'n', 'p50Ms', 'p90Ms', 'totalSec', 'errors', 'cancelled', 'timeouts']));
-  out.push('  Hook latency per day (all hooks):');
-  out.push(table(stats.daily.slice(-10).map((r) => ({ Day: r.day, n: r.n, p50Ms: r.p50Ms, p90Ms: r.p90Ms })), ['Day', 'n', 'p50Ms', 'p90Ms']));
-  return out.join('\n');
+function transcriptSection(probes) {
+  const t = probes.transcripts;
+  if (!t) return null;
+  const lines = [`Claude transcripts: ${t.totalGb} GB in ${plural(t.files, 'file')}`];
+  const shares = probes.hookStats ? probes.hookStats.files.map((f) => f.hookPercent).filter((p) => p != null) : [];
+  if (shares.length) lines.push(`  Recent transcripts are ${Math.min(...shares)}-${Math.max(...shares)}% hook output.`);
+  if (t.largest.length) lines.push(`  Largest: ${t.largest.slice(0, 3).map((f) => `${cellText(f.project)} ${f.mb} MB`).join(', ')}`);
+  return lines.join('\n');
 }
 
 function render(d, probes, opts) {
-  const parts = [];
-  parts.push(`Session doctor report ${localTime(d.generatedAt)} on ${d.platform} (this session's agent pid: ${d.selfCliPid || 'none'})`);
-  parts.push(section('Machine'));
-  parts.push(`  CPU ${d.load.cpuPercent}% of ${d.load.cores} logical cores, RAM ${d.load.memUsedPercent}% used (${d.load.memFreeGb} GB free of ${d.load.memTotalGb} GB)`);
-  parts.push(section(`Agent CLI sessions (stale >= ${opts.staleHours}h idle, hung = busy with no conversation entry for ${opts.hungMinutes}m)`));
-  parts.push(table(sessionRows(d.sessions), ['State', 'Agent', 'Pid', 'Idle', 'Age', 'Procs', 'MB', 'Children', 'Ports', 'LastTool', 'Worktree', 'Session']));
-  parts.push(section('Orphaned processes (launcher is gone)'));
-  if (d.portsKnown === false) parts.push('  Note: listening ports could not be read (no lsof/ss or no permission), so orphaned MCP/plugin servers are listed as orphan-task.');
-  parts.push(table(groupRows(d.orphans), ['Category', 'Pid', 'Role', 'Age', 'Procs', 'MB', 'Ports', 'What']));
-  parts.push(section(`Stuck hooks (started by an agent, older than ${opts.hookMaxMinutes}m and their configured timeout)`));
-  parts.push(table(groupRows(d.stuckHooks), ['Category', 'Pid', 'Role', 'Age', 'Procs', 'MB', 'Ports', 'What']));
-  parts.push(section('IDE hosts (MCP servers and agent CLIs running inside editors)'));
-  parts.push(table(d.ideHosts.map((h) => ({ IDE: h.label, Windows: h.roots, MCP: h.mcp, MCP_MB: h.mcpMb, CLIs: h.clis, Hooks: h.hooks })), ['IDE', 'Windows', 'MCP', 'MCP_MB', 'CLIs', 'Hooks']));
-  parts.push(section('Claude desktop terminal shells (Terminal panel)'));
-  parts.push(d.terminals.length ? `  ${d.terminals.length} shells, ${sum(d.terminals, 'mb')} MB, oldest ${formatSpan(Math.max(...d.terminals.map((t) => t.ageHours)) * 60)}. Closed only by closing their tabs or restarting the app.` : '  (none)');
-  parts.push(section('Hooks on the tool-call hot path'));
-  parts.push(hookLines(d, probes));
-  parts.push(section(`Claude desktop inactivity timeouts (last ${opts.timeoutHours}h)`));
-  const timeouts = [...probes.timeouts].sort((a, b) => b.at - a.at).slice(0, 12);
-  parts.push(table(timeouts.map((t) => ({ At: localTime(t.at), Session: t.hostSessionId, Seconds: t.seconds, LastTool: t.lastTool })), ['At', 'Session', 'Seconds', 'LastTool']));
-  if (probes.transcripts) {
-    parts.push(section('Claude transcripts'));
-    parts.push(transcriptLines(probes.transcripts, probes.hookStats));
-  }
-  parts.push(section('Suggested actions'));
-  parts.push(suggestions(d, opts));
-  return parts.join('\n');
+  const s = summarize(d);
+  const header = `Session doctor · ${localTime(d.generatedAt)} · ${d.platform}`;
+  return [
+    `${header}\n${overview(d, s, probes, opts)}`,
+    sessionsSection(s),
+    cleanupSection(d, s, opts),
+    leakSection(d),
+    ideSection(d),
+    desktopSection(d, probes, opts),
+    hooksSection(d, probes),
+    transcriptSection(probes),
+  ].filter(Boolean).join('\n\n');
 }
 
-module.exports = { table, localTime, render };
+module.exports = { table, localTime, size, span, render, sessionLine };

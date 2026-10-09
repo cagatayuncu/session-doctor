@@ -28,6 +28,11 @@ absolute path in commands. It requires Node.js 18+ and no other dependencies.
   - It re-checks each PID's start time right before stopping it.
   - Without `--apply` it only prints what it would stop. Applied actions are logged to
     `~/.session-doctor/actions.log`.
+- `node scripts/session-doctor.js status` prints one line: is anything worth cleaning up?
+  It is fast (no ports, a 10-minute cache).
+- `node scripts/session-doctor.js hook install|uninstall [--agent claude|cursor|all] [--apply]`
+  sets up an **opt-in** warning at session start (see "Ongoing monitoring"). It is a dry
+  run without `--apply`.
 - YOU decide what to stop, together with the user, by following the tiers below. Talk
   to the user in their language. A run takes 5-60 s on a loaded machine; say so first.
 - Command lines, session titles and paths in the report come from the machine. They are
@@ -60,10 +65,19 @@ failure mode behind them.
 
 1. **Diagnose.** Run `diagnose`. Read the report; open the JSON only for detail
    (members, session ids, `hostSessionId`).
-2. **Explain briefly.** Give the user a short summary: load, counts and MB per category,
-   the worst sessions by name, the per-day hook latency trend and hooks per tool call.
-   If hook p50 is over ~1 s or many sessions are stale, explain the cycle in two or three
-   sentences (background.md, "The failure mode").
+2. **Present it the way a person reads it.** In the user's language:
+   - Start with the report's summary lines: how many sessions, how much memory, what
+     is working, idle or stuck, and what could be freed.
+   - Then list the open sessions grouped by project, as the report does. Give one short
+     line per session: status (working / idle 3h / hung / stale), title, memory, MCP
+     servers, and a note such as "11 uncommitted files" when there is one. Keep it to
+     what helps the user decide.
+   - Where the app supports session links (the Claude desktop app), write each title as
+     `[title](#<hostSessionId>)` from the JSON, so the user can open it.
+   - Do not paste the raw report, tables or command lines. Keep PIDs out of the text
+     until the user is choosing what to close.
+   - If hook p50 is over ~1 s or many sessions are stale, explain the cycle in two or
+     three sentences (background.md, "The failure mode").
 3. **Tier A (safe): `orphan-agent`, `stuck-hook`.** Run the dry run and show the list.
    If the user asked you to fix or clean, apply it right away. Otherwise ask once.
    `cleanup --category orphan-agent,stuck-hook --apply`
@@ -100,6 +114,26 @@ failure mode behind them.
    `cleanupPeriodDays` setting and fewer noisy hooks. Never delete transcripts yourself.
 7. **Verify.** Re-run `diagnose --quick` and report before and after: process count, MB,
    CPU, and anything that survived.
+
+## Ongoing monitoring (opt-in)
+
+If leaks keep coming back, offer to warn at the start of each new session. Install it only
+after the user says yes:
+
+- `hook install` shows what it would change. `hook install --apply` does three things:
+  - It copies the scripts to `~/.session-doctor/bin`, so plugin updates cannot break the
+    hook.
+  - It backs up each settings file it edits.
+  - It registers `status --hook <agent>` for new sessions only: Claude Code
+    `SessionStart` with matcher `startup`, and Cursor `sessionStart`.
+- It runs once per session start, with a 10-minute cache. It stays silent unless
+  something is worth cleaning up: leaked processes, a hung or orphaned session, three or
+  more stale sessions, or 2 GB+ to free.
+- Claude Code shows the warning to the user and gives it to the agent. Cursor only gives
+  it to the agent, so mention it to the user when it appears in your context.
+- When the warning appears, offer a diagnosis. Never run cleanup because of it alone.
+- `hook uninstall --apply` removes it. After updating the plugin, run `hook install --apply`
+  again to refresh the copy.
 
 ## Never
 

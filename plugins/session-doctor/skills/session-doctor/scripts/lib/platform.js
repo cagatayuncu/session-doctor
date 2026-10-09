@@ -19,15 +19,20 @@ const TERM_GRACE_STEP_MS = 100;
 const SPAWN_RUNS = 3;
 
 // One PowerShell start for processes, ports and load: process starts are what is slow here.
-const WINDOWS_SNAPSHOT_SCRIPT = [
-  '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
-  "$props = 'ProcessId','ParentProcessId','Name','CommandLine','CreationDate','WorkingSetSize'",
-  '$procs = @(Get-CimInstance Win32_Process -Property $props | ForEach-Object { $t = 0; if ($_.CreationDate) { $t = $_.CreationDate.ToFileTimeUtc() }; [pscustomobject]@{ p = $_.ProcessId; pp = $_.ParentProcessId; n = $_.Name; c = $_.CommandLine; t = [string]$t; m = $_.WorkingSetSize } })',
-  '$ports = @(); $portsOk = $true; try { $ports = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ p = $_.OwningProcess; port = $_.LocalPort } }) } catch { $portsOk = $false }',
-  '$cpu = (Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average',
-  '$os = Get-CimInstance Win32_OperatingSystem -Property TotalVisibleMemorySize,FreePhysicalMemory',
-  '[pscustomobject]@{ procs = $procs; ports = $ports; portsOk = $portsOk; cpu = $cpu; totalKb = $os.TotalVisibleMemorySize; freeKb = $os.FreePhysicalMemory } | ConvertTo-Json -Compress -Depth 4',
-].join('; ');
+function windowsSnapshotScript(withPorts) {
+  const ports = withPorts
+    ? '$ports = @(); $portsOk = $true; try { $ports = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ p = $_.OwningProcess; port = $_.LocalPort } }) } catch { $portsOk = $false }'
+    : '$ports = @(); $portsOk = $false';
+  return [
+    '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
+    "$props = 'ProcessId','ParentProcessId','Name','CommandLine','CreationDate','WorkingSetSize'",
+    '$procs = @(Get-CimInstance Win32_Process -Property $props | ForEach-Object { $t = 0; if ($_.CreationDate) { $t = $_.CreationDate.ToFileTimeUtc() }; [pscustomobject]@{ p = $_.ProcessId; pp = $_.ParentProcessId; n = $_.Name; c = $_.CommandLine; t = [string]$t; m = $_.WorkingSetSize } })',
+    ports,
+    '$cpu = (Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average',
+    '$os = Get-CimInstance Win32_OperatingSystem -Property TotalVisibleMemorySize,FreePhysicalMemory',
+    '[pscustomobject]@{ procs = $procs; ports = $ports; portsOk = $portsOk; cpu = $cpu; totalKb = $os.TotalVisibleMemorySize; freeKb = $os.FreePhysicalMemory } | ConvertTo-Json -Compress -Depth 4',
+  ].join('; ');
+}
 
 function asArray(value) {
   if (value == null) return [];
@@ -121,9 +126,9 @@ function parseSs(text) {
   return ports;
 }
 
-function run(command, args) {
+function run(command, args, timeoutMs = COMMAND_TIMEOUT_MS) {
   return execFileSync(command, args, {
-    encoding: 'utf8', maxBuffer: MAX_BUFFER, timeout: COMMAND_TIMEOUT_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+    encoding: 'utf8', maxBuffer: MAX_BUFFER, timeout: timeoutMs, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
   });
 }
 
@@ -153,15 +158,15 @@ function unixListeningPorts() {
   return { ports: new Map(), known: false };
 }
 
-function snapshotWindows() {
-  const raw = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WINDOWS_SNAPSHOT_SCRIPT]);
+function snapshotWindows({ withPorts = true, timeoutMs } = {}) {
+  const raw = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', windowsSnapshotScript(withPorts)], timeoutMs);
   return parseWindowsSnapshot(raw);
 }
 
-function snapshotUnix({ withPorts = true } = {}) {
+function snapshotUnix({ withPorts = true, timeoutMs } = {}) {
   const now = Date.now();
-  const stats = run('ps', ['-A', '-ww', '-o', 'pid=,ppid=,rss=,etime=,comm=']);
-  const commands = run('ps', ['-A', '-ww', '-o', 'pid=,command=']);
+  const stats = run('ps', ['-A', '-ww', '-o', 'pid=,ppid=,rss=,etime=,comm='], timeoutMs);
+  const commands = run('ps', ['-A', '-ww', '-o', 'pid=,command='], timeoutMs);
   const cpuPercent = (100 * os.loadavg()[0]) / Math.max(1, os.cpus().length);
   const listening = withPorts ? unixListeningPorts() : { ports: new Map(), known: false };
   return {
@@ -185,7 +190,7 @@ function isZombie(pid) {
 }
 
 function snapshot(options = {}) {
-  return IS_WIN ? snapshotWindows() : snapshotUnix(options);
+  return IS_WIN ? snapshotWindows(options) : snapshotUnix(options);
 }
 
 function findGitBash() {
