@@ -27,40 +27,43 @@ The agent then applies only what each tier allows.
 
 ## Install
 
-### One command (any agent that reads skill folders)
-
 ```bash
-npx github:cagatayuncu/session-doctor install
+npx skills add cagatayuncu/session-doctor -g
 ```
 
-This copies the skill to `~/.claude/skills/session-doctor`, where both Claude Code and
-Cursor find it. Without Claude Code it goes to Cursor's `~/.cursor/skills`, or else to
-`~/.agents/skills`. Choose explicitly with `--agent claude|cursor|agents`; remove it with
-`npx github:cagatayuncu/session-doctor uninstall`. Running the same command with no
-arguments gives a read-only diagnosis without installing anything:
-`npx github:cagatayuncu/session-doctor`.
+This uses the [skills CLI](https://github.com/vercel-labs/skills), the standard installer
+for agent skills. It puts the skill in `~/.agents/skills/session-doctor`, which Cursor,
+Codex, Cline and about 20 other agents read, and links it into Claude Code's
+`~/.claude/skills`. It asks which agents you use; `-y` installs for all of them.
 
-### Claude Code
+| | Command |
+|---|---|
+| Update | `npx skills update session-doctor -g` |
+| Remove | `npx skills remove session-doctor -g` |
+
+The skill needs Node.js 18+ and no other dependencies.
+
+### Other ways to install
+
+**Claude Code plugin.** Updates arrive through Claude Code's plugin manager.
 
 ```text
 /plugin marketplace add cagatayuncu/session-doctor
 /plugin install session-doctor@session-doctor
 ```
 
-Or from a shell: `claude plugin marketplace add cagatayuncu/session-doctor` and
-`claude plugin install session-doctor@session-doctor`.
-
-### Cursor
-
-In Cursor, open **Customize → Plugins → From GitHub Repository** and paste
-`https://github.com/cagatayuncu/session-doctor`. Teams can also add it under
+**Cursor plugin.** In Cursor, open **Customize → Plugins → From GitHub Repository** and
+paste `https://github.com/cagatayuncu/session-doctor`. Teams can also add it under
 **Dashboard → Plugins & MCPs → Add Marketplace → Import from Repo**.
 
-### Any agent that reads skill folders (manual)
+**Without the skills CLI.** `npx github:cagatayuncu/session-doctor install` copies the
+skill to `~/.claude/skills`, where Claude Code and Cursor both find it. Use
+`--agent claude|cursor|agents` to pick the folder and `uninstall` to remove it. The same
+command with no arguments runs a read-only diagnosis without installing anything.
 
-Cursor loads skills from `~/.cursor/skills`, `~/.agents/skills` and `~/.claude/skills`;
-Claude Code loads them from `~/.claude/skills`. Clone the repository and link the skill
-folder into one of those directories.
+**Manual.** Clone the repository and link the skill folder into a skills directory: Claude
+Code reads `~/.claude/skills`; Cursor reads `~/.cursor/skills`, `~/.agents/skills` and
+`~/.claude/skills`.
 
 macOS / Linux:
 
