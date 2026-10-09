@@ -19,16 +19,20 @@ const { render } = require('./lib/report');
 const { summarize } = require('./lib/summary');
 const status = require('./lib/status');
 const install = require('./lib/install');
+const skillInstall = require('./lib/skill-install');
 
-const USAGE = `Usage:
-  node session-doctor.js diagnose [--quick] [--json] [thresholds] [--timeout-hours N] [--project DIR]
-  node session-doctor.js cleanup --category <list> [--only <pid,...>] [--apply] [thresholds]
-  node session-doctor.js status [--hook claude|cursor] [--max-age-minutes N]
-  node session-doctor.js hook install|uninstall [--agent claude|cursor|all] [--apply]
+const USAGE = `Usage: session-doctor [command] [options]      (no command: diagnose)
+  diagnose [--quick] [--json] [thresholds] [--timeout-hours N] [--project DIR]
+  cleanup --category <list> [--only <pid,...>] [--apply] [thresholds]
+  status [--hook claude|cursor] [--max-age-minutes N]
+  install | uninstall [--agent claude|cursor|agents]   copy the skill into an agent's skills folder
+  hook install | uninstall [--agent claude|cursor|all] [--apply]
 
 Thresholds: --stale-hours N (${DEFAULTS.staleHours}), --hung-minutes N (${DEFAULTS.hungMinutes}), --hook-max-minutes N (${DEFAULTS.hookMaxMinutes})
 Categories: ${CLEANUP_CATEGORIES.join(', ')}
-diagnose and status are read-only. cleanup and hook are dry runs unless --apply is given.`;
+diagnose and status are read-only. cleanup and hook are dry runs unless --apply is given.
+install picks Claude Code (~/.claude/skills, which Cursor reads too), else Cursor, else ~/.agents/skills.`;
+const SKILL_AGENTS = ['claude', 'cursor', 'agents'];
 const DEFAULT_TIMEOUT_HOURS = 48;
 const DEFAULT_STATUS_MAX_AGE_MINUTES = 10;
 const STATUS_SNAPSHOT_TIMEOUT_MS = 20000;
@@ -55,13 +59,16 @@ function oneOf(flag, value, allowed) {
 }
 
 function parseArgs(argv) {
-  const [command = 'help', ...afterCommand] = argv;
+  // `npx session-doctor` and `npx session-doctor --quick` mean diagnose.
+  const startsWithCommand = argv.length > 0 && !argv[0].startsWith('-');
+  const command = startsWithCommand ? argv[0] : 'diagnose';
+  const afterCommand = startsWithCommand ? argv.slice(1) : argv;
   const subcommand = command === 'hook' ? afterCommand[0] : null;
   const rest = command === 'hook' ? afterCommand.slice(1) : afterCommand;
   const opts = {
     command, subcommand, quick: false, json: false, apply: false, category: [], only: [], project: process.cwd(),
     staleHours: DEFAULTS.staleHours, hungMinutes: DEFAULTS.hungMinutes, hookMaxMinutes: DEFAULTS.hookMaxMinutes,
-    timeoutHours: DEFAULT_TIMEOUT_HOURS, maxAgeMinutes: DEFAULT_STATUS_MAX_AGE_MINUTES, hook: null, agent: 'all',
+    timeoutHours: DEFAULT_TIMEOUT_HOURS, maxAgeMinutes: DEFAULT_STATUS_MAX_AGE_MINUTES, hook: null, agent: null,
   };
   const flags = { '--quick': 'quick', '--json': 'json', '--apply': 'apply' };
   const numbers = {
@@ -82,10 +89,12 @@ function parseArgs(argv) {
     else if (arg === '--only') opts.only = pidList(value());
     else if (arg === '--project') opts.project = path.resolve(value());
     else if (arg === '--hook') opts.hook = oneOf(arg, value(), HOOK_AGENTS);
-    else if (arg === '--agent') opts.agent = oneOf(arg, value(), [...HOOK_AGENTS, 'all']);
+    else if (arg === '--agent') opts.agent = value();
     else throw new UsageError(`unknown option ${arg}`);
   }
   if (command === 'hook' && !['install', 'uninstall'].includes(subcommand)) throw new UsageError('hook needs install or uninstall');
+  if (command === 'hook') opts.agent = oneOf('--agent', opts.agent || 'all', [...HOOK_AGENTS, 'all']);
+  if (command === 'install' || command === 'uninstall') opts.agent = opts.agent && oneOf('--agent', opts.agent, SKILL_AGENTS);
   return opts;
 }
 
@@ -245,12 +254,38 @@ function hookCommand(opts) {
   else process.stdout.write('Done.\n');
 }
 
+// Copies the skill folder (the parent of this scripts folder) into an agent's skills folder.
+function skillCommand(opts) {
+  const homes = { claudeHome: claudeHome(), cursorHome: cursorHome(), home: os.homedir() };
+  const agent = opts.agent || skillInstall.autoAgent(homes);
+  const target = skillInstall.skillTargets(homes)[agent];
+  if (opts.command === 'uninstall') {
+    const result = skillInstall.uninstallSkill(target);
+    process.stdout.write(result === 'removed' ? `Removed ${target}\n` : `Nothing installed at ${target}\n`);
+    return;
+  }
+  const result = skillInstall.installSkill(path.join(__dirname, '..'), target);
+  const where = { claude: 'Claude Code (Cursor reads this folder too)', cursor: 'Cursor', agents: 'agents that read ~/.agents/skills' }[agent];
+  if (result === 'already') {
+    process.stdout.write(`Already installed at ${target}\n`);
+    return;
+  }
+  process.stdout.write([
+    `${result === 'updated' ? 'Updated' : 'Installed'} the session-doctor skill for ${where}:`,
+    `  ${target}`,
+    'Start a new agent session and ask, for example: "my agent is slow, run session doctor".',
+    `Remove it with: npx github:cagatayuncu/session-doctor uninstall${opts.agent ? ` --agent ${agent}` : ''}`,
+    '',
+  ].join('\n'));
+}
+
 async function main(argv) {
   const opts = parseArgs(argv);
   if (opts.command === 'diagnose') return diagnose(opts);
   if (opts.command === 'cleanup') return cleanup(opts);
   if (opts.command === 'status') return statusCommand(opts);
   if (opts.command === 'hook') return hookCommand(opts);
+  if (opts.command === 'install' || opts.command === 'uninstall') return skillCommand(opts);
   if (opts.command === 'help') {
     process.stdout.write(`${USAGE}\n`);
     return undefined;

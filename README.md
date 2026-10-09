@@ -27,6 +27,19 @@ The agent then applies only what each tier allows.
 
 ## Install
 
+### One command (any agent that reads skill folders)
+
+```bash
+npx github:cagatayuncu/session-doctor install
+```
+
+This copies the skill to `~/.claude/skills/session-doctor`, where both Claude Code and
+Cursor find it. Without Claude Code it goes to Cursor's `~/.cursor/skills`, or else to
+`~/.agents/skills`. Choose explicitly with `--agent claude|cursor|agents`; remove it with
+`npx github:cagatayuncu/session-doctor uninstall`. Running the same command with no
+arguments gives a read-only diagnosis without installing anything:
+`npx github:cagatayuncu/session-doctor`.
+
 ### Claude Code
 
 ```text

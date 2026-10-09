@@ -1,6 +1,6 @@
 {
   "name": "session-doctor",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Find and safely stop leaked or stuck AI-agent processes (Claude Code, Cursor and other agent CLIs): stale and hung sessions, orphaned hooks, MCP servers and background jobs, plus hook overhead. Windows, macOS, Linux.",
   "author": {
     "name": "cagatayuncu"

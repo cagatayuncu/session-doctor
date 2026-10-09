@@ -1,12 +1,26 @@
 {
   "name": "session-doctor",
-  "version": "1.1.0",
-  "private": true,
-  "description": "Agent skill that finds and safely stops leaked AI-agent processes (Claude Code, Cursor, other agent CLIs)",
+  "version": "1.2.0",
+  "description": "Agent skill and CLI that finds and safely stops leaked AI-agent processes (Claude Code, Cursor, other agent CLIs) and measures hook overhead",
   "license": "MIT",
+  "author": "cagatayuncu",
+  "homepage": "https://github.com/cagatayuncu/session-doctor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cagatayuncu/session-doctor.git"
+  },
+  "keywords": ["claude-code", "cursor", "agent-skills", "mcp", "hooks", "processes", "performance", "cleanup"],
   "engines": {
     "node": ">=18"
   },
+  "bin": {
+    "session-doctor": "plugins/session-doctor/skills/session-doctor/scripts/session-doctor.js"
+  },
+  "files": [
+    "plugins/session-doctor/skills/session-doctor/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test",
     "diagnose": "node plugins/session-doctor/skills/session-doctor/scripts/session-doctor.js diagnose",
