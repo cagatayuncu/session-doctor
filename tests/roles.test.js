@@ -6,9 +6,9 @@ const { lib } = require('./helpers');
 
 const { processRole, hookSignature, hookMatch, isHookCommand, cliAgent, isHeadless, isNeverStop } = lib('roles');
 
-const IMECE = 'C:/Repositories/imece/bin/daemon/imece.exe';
+const ORCH = 'C:/Tools/orchestrator/bin/daemon/orch.exe';
 const SIGNATURES = [
-  hookSignature(`"${IMECE}" hook stop --managed-by=imece`),
+  hookSignature(`"${ORCH}" hook stop --managed-by=orch`),
   hookSignature('node "C:\\Users\\u\\.pixel-agents\\hooks\\claude-hook.js"'),
   hookSignature('node ${CLAUDE_PLUGIN_ROOT}/hooks/run-python-hook.js ${CLAUDE_PLUGIN_ROOT}/hooks/validate-schema.py', 'C:\\p\\seo'),
 ].filter(Boolean);
@@ -34,9 +34,9 @@ const CASES = [
   ['node.exe', 'node C:\\Users\\u\\.pixel-agents\\hooks\\claude-hook.js', 'hook'],
   ['node', 'node /home/u/.cursor/hooks/format.js', 'hook'],
   ['node.exe', 'node -e "require(\'x/scripts/hooks/plugin-hook-bootstrap.js\')" node scripts/hooks/mcp-health-check.js', 'hook'],
-  ['imece.exe', `${IMECE} hook session-start`, 'hook'],
-  ['imece.exe', `${IMECE} mcp`, 'mcp'],
-  ['imece.exe', `${IMECE} daemon --managed-by desktop`, 'other'],
+  ['orch.exe', `${ORCH} hook session-start`, 'hook'],
+  ['orch.exe', `${ORCH} mcp`, 'mcp'],
+  ['orch.exe', `${ORCH} daemon --managed-by desktop`, 'other'],
   ['node.exe', 'node npx-cli.js -y chrome-devtools-mcp@latest', 'mcp'],
   ['node', 'node /home/u/.claude/plugins/cache/x/server.js', 'plugin'],
   ['node.exe', 'node C:\\Repos\\web\\node_modules\\vite\\bin\\vite.js --port 5174', 'dev-server'],
@@ -57,8 +57,8 @@ for (const [name, cmd, role] of CASES) {
 }
 
 test('an absolute hook path is a strong signature with its subcommand', () => {
-  const sig = hookSignature(`"${IMECE}" hook stop`, '', 30);
-  assert.deepStrictEqual(sig.tokens, ['c:/repositories/imece/bin/daemon/imece.exe', 'hook']);
+  const sig = hookSignature(`"${ORCH}" hook stop`, '', 30);
+  assert.deepStrictEqual(sig.tokens, ['c:/tools/orchestrator/bin/daemon/orch.exe', 'hook']);
   assert.strictEqual(sig.strength, 'strong');
   assert.strictEqual(sig.timeoutSec, 30);
 });

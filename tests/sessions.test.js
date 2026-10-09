@@ -45,7 +45,7 @@ test('registry entries must belong to the live process', () => {
 });
 
 test('session id from the command line', () => {
-  assert.strictEqual(sessionIdFromCommand('claude', 'claude --resume 7cf5ff36-a5e7-44bb-9b78-a2fe7b04ac79'), '7cf5ff36-a5e7-44bb-9b78-a2fe7b04ac79');
+  assert.strictEqual(sessionIdFromCommand('claude', 'claude --resume 11111111-2222-4333-8444-555555555555'), '11111111-2222-4333-8444-555555555555');
   assert.strictEqual(sessionIdFromCommand('cursor', 'cursor-agent --resume=chat-1234abcd'), 'chat-1234abcd');
   assert.strictEqual(sessionIdFromCommand('claude', 'claude'), '');
 });

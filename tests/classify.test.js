@@ -8,9 +8,9 @@ const { buildContext, orphanGroups, stuckHookGroups, sessionInventory, desktopTe
 
 const DESKTOP = 'C:\\Program Files\\WindowsApps\\Claude_2.1_x64__abc\\app\\Claude.exe';
 const CLI = 'C:\\Users\\u\\AppData\\Roaming\\Claude\\claude-code\\2.1.284\\claude.exe --output-format stream-json';
-const IMECE = 'C:/Repositories/imece/bin/daemon/imece.exe';
+const ORCH = 'C:/Tools/orchestrator/bin/daemon/orch.exe';
 const HOOKS = [
-  { agent: 'claude', source: 'claude:user', event: 'Stop', matcher: '', command: `"${IMECE}" hook stop`, pluginRoot: '' },
+  { agent: 'claude', source: 'claude:user', event: 'Stop', matcher: '', command: `"${ORCH}" hook stop`, pluginRoot: '' },
   { agent: 'claude', source: 'claude:user', event: 'Stop', matcher: '', command: 'node "C:\\Users\\u\\.pixel-agents\\hooks\\claude-hook.js"', pluginRoot: '' },
 ];
 
@@ -20,10 +20,10 @@ function machine() {
     proc(100, 1, 'claude.exe', DESKTOP, 200),
     proc(200, 100, 'claude.exe', CLI, 150, 300),
     proc(201, 200, 'cmd.exe', 'cmd.exe /d /s /c "npx -y chrome-devtools-mcp@latest"', 150, 6),
-    proc(400, 200, 'bash.exe', `bash.exe -c "${IMECE} hook stop"`, 0.5, 7),
+    proc(400, 200, 'bash.exe', `bash.exe -c "${ORCH} hook stop"`, 0.5, 7),
     proc(500, 100, 'claude.exe', CLI, 2, 300),
     proc(501, 500, 'pwsh.exe', 'pwsh.exe -NoProfile -Command "$__claudeCodeScript = 1"', 0.1, 90),
-    proc(502, 500, 'imece.exe', `${IMECE} mcp`, 2, 30),
+    proc(502, 500, 'orch.exe', `${ORCH} mcp`, 2, 30),
     proc(130, 100, 'pwsh.exe', 'pwsh.exe', 100, 77),
     proc(300, 999, 'node.exe', 'node.exe C:\\Users\\u\\.pixel-agents\\hooks\\claude-hook.js', 3, 44),
     proc(310, 998, 'bash.exe', 'bash.exe -c "source /c/u/.claude/shell-snapshots/snapshot-bash-1.sh && eval \'python -m app.main\' < /dev/null"', 22, 8),
@@ -33,7 +33,7 @@ function machine() {
     proc(330, 996, 'cmd.exe', 'cmd.exe /C "C:\\Program Files\\AMD\\AMDRSServ.exe"', 150, 3),
     proc(340, 341, 'node.exe', 'node C:\\Repos\\web\\node_modules\\vite\\bin\\vite.js', 48, 64),
     proc(341, 1, 'notepad.exe', 'notepad.exe', 1, 5),
-    proc(350, 995, 'claude.exe', 'C:\\Users\\u\\.local\\bin\\claude.exe --session-id 7cf5ff36-a5e7-44bb-9b78-a2fe7b04ac79', 70, 250),
+    proc(350, 995, 'claude.exe', 'C:\\Users\\u\\.local\\bin\\claude.exe --session-id 11111111-2222-4333-8444-555555555555', 70, 250),
     proc(360, 994, 'node.exe', 'node remote-mcp-server.js --port 8931', 5, 40),
     // The user's own terminal: explorer never has a live parent, its tree must stay untouched.
     proc(600, 1, 'WindowsTerminal.exe', 'WindowsTerminal.exe', 100, 80),
@@ -146,7 +146,7 @@ test('session inventory', async (t) => {
   await t.test('this session is self', () => assert.strictEqual(sessions.get(500).state, 'self'));
   await t.test('a CLI whose launcher died is orphan-cli', () => assert.strictEqual(sessions.get(350).state, 'orphan-cli'));
   await t.test('the session id is read from the command line when unregistered', () => {
-    assert.strictEqual(sessions.get(350).sessionId, '7cf5ff36-a5e7-44bb-9b78-a2fe7b04ac79');
+    assert.strictEqual(sessions.get(350).sessionId, '11111111-2222-4333-8444-555555555555');
   });
   await t.test('a registry entry from an earlier process with the same PID is ignored', () => {
     const stale = new Map([[200, { pid: 200, sessionId: 's-x', status: 'idle', updatedAt: NOW - 20 * HOUR, procStart: '134000000000000000' }]]);

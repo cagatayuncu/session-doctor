@@ -111,17 +111,17 @@ The report starts with a summary, then lists the open sessions by project:
 ```text
 Session doctor · 2026-10-08 23:41 · win32
   12 agent sessions open (this one included), using 7.2 GB with 72 MCP server processes.
-  1 working, 3 active in the last hour, 7 idle for hours.
+  1 working, 3 active in the last hour, 6 idle for hours, 1 hung.
   No leaked agent processes.
   Hooks: every Edit starts 18 hook processes; a hook takes 1.0 s (median, 2026-10-08).
 
 Open sessions by project
-  imece  (3 sessions, 2.2 GB)
-    ● working         Merge the open branches                          1.2 GB  6 MCP   pid 4332
-    ○ idle 2h 38m     Check stream.gap control-frame spoofing          541 MB  6 MCP   pid 50148  · worktree great-lewin
-  Terminero  (2 sessions, 1.1 GB)
-    ◐ idle 3m         Run e2e tests against a separate database        603 MB  6 MCP   pid 27348
-    ⚠ hung 3h         Stabilize flaky drag-conflict e2e                532 MB  6 MCP   pid 26288  · stuck in code-reviewer > Read
+  repo-1  (2 sessions, 1.7 GB)
+    ● working         Add pagination to the orders API                 1.2 GB  6 MCP   pid 4332
+    ○ idle 2h 38m     Review the auth middleware                       541 MB  6 MCP   pid 50148  · worktree feature-a
+  repo-2  (2 sessions, 1.1 GB)
+    ◐ idle 3m         Update the README                                603 MB  6 MCP   pid 27348
+    ⚠ hung 3h         Fix the flaky checkout test                      532 MB  6 MCP   pid 26288  · stuck in code-reviewer > Read
 
 What can be cleaned up
   Your choice: 1 hung session (interrupt the turn first if the app can): 532 MB, 10 processes, pids 26288.
